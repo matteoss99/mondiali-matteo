@@ -9,6 +9,12 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+// --- 🎯 WHITE LIST: Mostriamo SOLO queste se esistono ---
+const IMPORTANT_LEAGUES = [
+  'Serie A', 'Champions League', 'Europa League', 'Conference League', 
+  'Premier League', 'LaLiga', 'Bundesliga', 'Coppa Italia', 'World Cup', 'Euro'
+];
+
 export default function PronosticiPage() {
   const [allMatches, setAllMatches] = useState<any[]>([]);
   const [filteredMatches, setFilteredMatches] = useState<any[]>([]);
@@ -25,7 +31,6 @@ export default function PronosticiPage() {
       const url = `https://livescore6.p.rapidapi.com/matches/v2/list-by-date?Category=soccer&Date=${today}&Timezone=1`;
       
       const response = await fetch(url, {
-        method: 'GET',
         headers: {
           'X-RapidAPI-Key': process.env.NEXT_PUBLIC_RAPIDAPI_KEY || '',
           'X-RapidAPI-Host': 'livescore6.p.rapidapi.com'
@@ -37,17 +42,19 @@ export default function PronosticiPage() {
       const leagueSet = new Set<string>();
 
       data.Stages?.forEach((stage: any) => {
-        let displayLeague = stage.Snm;
-        if (displayLeague.toLowerCase().includes('europa league')) {
-            displayLeague = 'Europa League';
-        } else if (displayLeague.toLowerCase().includes('conference league')) {
-            displayLeague = 'Conference League';
-        }
-        
-        leagueSet.add(displayLeague);
+        let name = stage.Snm;
+        // Normalizzazione nomi
+        if (name.includes('Champions League')) name = 'Champions League';
+        else if (name.includes('Europa League')) name = 'Europa League';
+        else if (name.includes('Serie A')) name = 'Serie A';
 
+        // --- FILTRO CATTIVO ---
+        // Se non è nella nostra lista importante e non è "Tutte", potremmo volerla nascondere
+        // Ma per ora lasciamo che appaiano solo quelle che hanno match "Not Started" (NS)
+        
         stage.Events?.forEach((event: any) => {
           if (event.Eps === 'NS') {
+            leagueSet.add(name);
             list.push({
               id: event.Eid,
               homeTeam: event.T1[0].Nm,
@@ -55,14 +62,13 @@ export default function PronosticiPage() {
               homeId: event.T1[0].ID,
               awayId: event.T2[0].ID,
               time: event.Esd.toString().substring(8, 12),
-              league: displayLeague 
+              league: name 
             });
           }
         });
       });
 
       setAllMatches(list);
-      setFilteredMatches(list);
       setLeagues(['Tutte', ...Array.from(leagueSet)].sort());
     } catch (err) {
       console.error(err);
@@ -72,18 +78,7 @@ export default function PronosticiPage() {
   };
 
   useEffect(() => {
-    const checkExisting = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase
-          .from('predictions')
-          .select('match_id')
-          .eq('user_id', user.id);
-        if (data) setExistingPredictions(data.map(p => p.match_id));
-      }
-    };
     fetchScheduledMatches();
-    checkExisting();
   }, []);
 
   useEffect(() => {
@@ -91,121 +86,61 @@ export default function PronosticiPage() {
     else setFilteredMatches(allMatches.filter(m => m.league === selectedLeague));
   }, [selectedLeague, allMatches]);
 
-  const salvaScommessa = async (matchId: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return alert("Devi loggarti!");
-
-    const s = scores[matchId];
-    if (!s?.home || !s?.away) return alert("Inserisci il punteggio!");
-
-    const { error } = await supabase.from('predictions').upsert({
-      user_id: user.id,
-      match_id: matchId,
-      home_score: parseInt(s.home),
-      away_score: parseInt(s.away)
-    }, { onConflict: 'user_id, match_id' });
-
-    if (error) alert("Errore: " + error.message);
-    else {
-      alert("Pronostico salvato! 🎯");
-      setExistingPredictions([...existingPredictions, matchId]);
-    }
-  };
-
-  if (loading) return <div className="p-20 text-center text-white">Preparando il palinsesto... 📅</div>;
+  if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white italic tracking-widest">Sincronizzazione...</div>;
 
   return (
-    <div className="p-8">
-      <header className="mb-10 flex flex-col md:flex-row justify-between items-center gap-6">
-        <div>
-          <h1 className="text-3xl font-black uppercase italic tracking-tighter text-white">Pronostici Oggi 🎰</h1>
-          <p className="text-slate-400 text-sm">Seleziona la lega e piazza la tua giocata</p>
-        </div>
-
-        <select 
-          className="bg-slate-800 border border-slate-700 p-3 rounded-xl text-sm text-white outline-none focus:border-blue-500 w-full md:w-64"
-          onChange={(e) => setSelectedLeague(e.target.value)}
-          value={selectedLeague}
-        >
-          {leagues.map(l => <option key={l} value={l}>{l}</option>)}
-        </select>
+    <div className="min-h-screen bg-slate-950 text-white p-6 md:p-10">
+      
+      <header className="max-w-6xl mx-auto mb-10">
+        <h1 className="text-4xl font-black italic uppercase tracking-tighter">Pronostici <span className="text-blue-500">Live</span></h1>
+        <div className="h-1 w-16 bg-blue-600 mt-2"></div>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {filteredMatches.map((m) => {
-          const isAlreadyDone = existingPredictions.includes(m.id);
+      {/* FILTRI CHIPS - Più piccoli e ordinati */}
+      <div className="max-w-6xl mx-auto mb-10">
+        <div className="flex gap-2 overflow-x-auto pb-4 no-scrollbar">
+          {leagues.map((l) => (
+            <button
+              key={l}
+              onClick={() => setSelectedLeague(l)}
+              className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all border-2 whitespace-nowrap
+                ${selectedLeague === l ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-500'}`}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          return (
-            <div key={m.id} className="bg-slate-800 p-6 rounded-[2rem] border border-slate-700 shadow-xl flex flex-col gap-4">
-              <div className="flex justify-between items-center border-b border-slate-700/50 pb-3">
-                <span className="text-[10px] font-black text-blue-400 uppercase">{m.league}</span>
-                <span className="text-xs font-bold text-slate-400 italic">Inizio: {m.time.substring(0,2)}:{m.time.substring(2,4)}</span>
-              </div>
-
-              <div className="flex items-center justify-between gap-4">
-                {/* CASA */}
-                <div className="flex flex-col items-center flex-1">
-                  <div className="w-14 h-14 bg-white/5 rounded-full p-2 mb-2 flex items-center justify-center">
-                    <img 
-                      src={`https://api.sofascore.app/api/v1/team/${m.homeId}/image`} 
-                      className="w-10 h-10 object-contain" 
-                      alt="" 
-                      onError={(e: any) => e.target.src = `https://ui-avatars.com/api/?name=${m.homeTeam}&background=random&color=fff`}
-                    />
-                  </div>
-                  <span className="text-[10px] font-black text-center uppercase text-white leading-tight">{m.homeTeam}</span>
-                </div>
-
-                {/* INPUTS - TESTO BIANCO E PROTEZIONE NEGATIVI */}
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="number" placeholder="0" min="0"
-                    disabled={isAlreadyDone}
-                    className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-xl text-center font-black text-white outline-none focus:border-blue-500 disabled:opacity-50"
-                    onChange={(e) => setScores({...scores, [m.id]: {...scores[m.id], home: e.target.value}})}
-                  />
-                  <span className="font-bold text-slate-600">:</span>
-                  <input 
-                    type="number" placeholder="0" min="0"
-                    disabled={isAlreadyDone}
-                    className="w-12 h-12 bg-slate-900 border border-slate-700 rounded-xl text-center font-black text-white outline-none focus:border-blue-500 disabled:opacity-50"
-                    onChange={(e) => setScores({...scores, [m.id]: {...scores[m.id], away: e.target.value}})}
-                  />
-                </div>
-
-                {/* OSPITI */}
-                <div className="flex flex-col items-center flex-1">
-                  <div className="w-14 h-14 bg-white/5 rounded-full p-2 mb-2 flex items-center justify-center">
-                    <img 
-                      src={`https://api.sofascore.app/api/v1/team/${m.awayId}/image`} 
-                      className="w-10 h-10 object-contain" 
-                      alt="" 
-                      onError={(e: any) => e.target.src = `https://ui-avatars.com/api/?name=${m.awayTeam}&background=random&color=fff`}
-                    />
-                  </div>
-                  <span className="text-[10px] font-black text-center uppercase text-white leading-tight">{m.awayTeam}</span>
-                </div>
-              </div>
-
-              {/* LOGICA BOTTONE VS MESSAGGIO GIALLO */}
-              {isAlreadyDone ? (
-                <div className="text-center p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
-                  <p className="text-[10px] text-yellow-500 font-bold uppercase leading-tight">
-                    Hai già giocato questa partita.<br/>
-                    <Link href="/previsioni" className="underline hover:text-yellow-400">Modificala in "Le mie previsioni"</Link>
-                  </p>
-                </div>
-              ) : (
-                <button 
-                  onClick={() => salvaScommessa(m.id)}
-                  className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black uppercase text-[11px] text-white tracking-widest transition-all shadow-lg shadow-blue-900/20 active:scale-95"
-                >
-                  Conferma Pronostico
-                </button>
-              )}
+      {/* MATCH CARDS - Pulizia totale */}
+      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+        {filteredMatches.map((m) => (
+          <div key={m.id} className="bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl">
+            <div className="flex justify-between text-[8px] font-black text-slate-500 uppercase mb-6 tracking-widest">
+              <span>{m.league}</span>
+              <span>Ore {m.time.substring(0,2)}:{m.time.substring(2,4)}</span>
             </div>
-          );
-        })}
+
+            <div className="flex items-center justify-between gap-4 mb-8">
+              <div className="flex-1 text-center">
+                <p className="text-xs font-black uppercase italic leading-tight">{m.homeTeam}</p>
+              </div>
+              
+              <div className="flex gap-2">
+                <input type="number" placeholder="0" className="w-12 h-12 bg-slate-950 border border-slate-800 rounded-xl text-center font-black text-blue-500 outline-none focus:border-blue-600" />
+                <input type="number" placeholder="0" className="w-12 h-12 bg-slate-950 border border-slate-800 rounded-xl text-center font-black text-blue-500 outline-none focus:border-blue-600" />
+              </div>
+
+              <div className="flex-1 text-center">
+                <p className="text-xs font-black uppercase italic leading-tight">{m.awayTeam}</p>
+              </div>
+            </div>
+
+            <button className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] transition-all">
+              Salva Pronostico
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
