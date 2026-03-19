@@ -10,79 +10,87 @@ const supabase = createClient(
 );
 
 export default function LegaPage() {
-  const [leagueName, setLeagueName] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
-  const [userLeagues, setUserLeagues] = useState<any[]>([]);
+  const [leagues, setLeagues] = useState<any[]>([]);
+  const [newLeagueName, setNewLeagueName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [nickname, setNickname] = useState('');
+  const [hasProfile, setHasProfile] = useState(false);
+  const [savingNickname, setSavingNickname] = useState(false);
   const router = useRouter();
 
-  // Carica le leghe di cui l'utente fa già parte
-  const fetchUserLeagues = async () => {
+  const fetchData = async () => {
+    setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      router.push('/login');
+      return;
+    }
 
-    const { data, error } = await supabase
+    // 1. Controllo se l'utente ha un Nickname
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', user.id)
+      .single();
+
+    if (profile?.username) {
+      setNickname(profile.username);
+      setHasProfile(true);
+    }
+
+    // 2. Recupero le Leghe dell'utente
+    const { data: memberData } = await supabase
       .from('league_members')
-      .select('leagues(id, name, invite_code)')
+      .select('league_id, leagues(id, name)')
       .eq('user_id', user.id);
 
-    if (data) setUserLeagues(data.map(item => item.leagues));
+    if (memberData) {
+      setLeagues(memberData.map((m: any) => m.leagues));
+    }
     setLoading(false);
   };
 
-  useEffect(() => { fetchUserLeagues(); }, []);
+  useEffect(() => {
+    fetchData();
+  }, []);
 
-  // Funzione per CREARE una lega
-  const createLeague = async () => {
+  const saveNickname = async () => {
+    if (!nickname.trim()) return alert("Inserisci un nickname valido!");
+    setSavingNickname(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user || !leagueName) return alert("Inserisci un nome per la lega!");
 
-    // Genera un codice casuale di 6 caratteri
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const { error } = await supabase
+      .from('profiles')
+      .upsert({ id: user?.id, username: nickname });
 
-    // 1. Inserisce la lega
-    const { data: newLeague, error: leagueError } = await supabase
+    if (error) {
+      alert("Errore: il nickname potrebbe essere già preso.");
+    } else {
+      setHasProfile(true);
+      alert("Nickname salvato! Ora apparirai in classifica.");
+    }
+    setSavingNickname(false);
+  };
+
+  const createLeague = async () => {
+    if (!newLeagueName) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    // Creazione Lega
+    const { data: league, error } = await supabase
       .from('leagues')
-      .insert([{ name: leagueName, invite_code: code }])
+      .insert({ name: newLeagueName, owner_id: user?.id })
       .select()
       .single();
 
-    if (leagueError) return alert(leagueError.message);
-
-    // 2. Aggiunge il creatore come membro
-    await supabase.from('league_members').insert([
-      { league_id: newLeague.id, user_id: user.id }
-    ]);
-
-    alert(`Lega creata! Codice invito: ${code}`);
-    setLeagueName('');
-    fetchUserLeagues();
-  };
-
-  // Funzione per UNIRSI a una lega
-  const joinLeague = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user || !inviteCode) return alert("Inserisci il codice!");
-
-    // 1. Trova la lega con quel codice
-    const { data: league, error: findError } = await supabase
-      .from('leagues')
-      .select('id')
-      .eq('invite_code', inviteCode.toUpperCase())
-      .single();
-
-    if (!league) return alert("Codice non valido!");
-
-    // 2. Aggiunge l'utente ai membri
-    const { error: joinError } = await supabase
-      .from('league_members')
-      .insert([{ league_id: league.id, user_id: user.id }]);
-
-    if (joinError) alert("Fai già parte di questa lega o c'è un errore.");
-    else {
-      alert("Sei entrato nella lega!");
-      setInviteCode('');
-      fetchUserLeagues();
+    if (league) {
+      // Autoiscrizione come proprietario
+      await supabase.from('league_members').insert({
+        league_id: league.id,
+        user_id: user?.id
+      });
+      setNewLeagueName('');
+      fetchData();
     }
   };
 
@@ -90,53 +98,76 @@ export default function LegaPage() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <h1 className="text-4xl font-black uppercase italic mb-10 text-center">Gestione Lega 🤝</h1>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-        {/* SEZIONE CREA */}
-        <div className="bg-slate-800 p-8 rounded-[2rem] border border-slate-700 shadow-xl">
-          <h2 className="text-xl font-bold mb-4">Crea una nuova Lega</h2>
-          <input 
-            type="text" placeholder="Nome Lega (es: Lega Dottori)" 
-            className="w-full p-4 bg-slate-900 border border-slate-700 rounded-xl mb-4 text-white"
-            value={leagueName}
-            onChange={(e) => setLeagueName(e.target.value)}
-          />
-          <button onClick={createLeague} className="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white uppercase transition-all">
-            Crea e Genera Codice
-          </button>
+      {/* SEZIONE NICKNAME - APPARE SOLO SE NON CE L'HAI */}
+      {!hasProfile ? (
+        <div className="mb-12 p-8 bg-blue-600 rounded-[2rem] shadow-2xl text-white">
+          <h2 className="text-2xl font-black uppercase italic mb-2">Benvenuto in Campo! 🏟️</h2>
+          <p className="text-blue-100 text-sm mb-6">Prima di iniziare, scegli il nome che tutti vedranno in classifica.</p>
+          <div className="flex gap-4">
+            <input 
+              type="text" 
+              placeholder="Esempio: Matteo_98"
+              className="flex-1 p-4 bg-white/10 border border-white/20 rounded-2xl outline-none focus:bg-white/20 transition-all font-bold placeholder:text-white/40"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+            />
+            <button 
+              onClick={saveNickname}
+              disabled={savingNickname}
+              className="px-8 py-4 bg-white text-blue-600 rounded-2xl font-black uppercase text-xs hover:scale-105 transition-transform disabled:opacity-50"
+            >
+              {savingNickname ? 'Salvataggio...' : 'Inizia la sfida'}
+            </button>
+          </div>
         </div>
-
-        {/* SEZIONE UNISCITI */}
-        <div className="bg-slate-800 p-8 rounded-[2rem] border border-slate-700 shadow-xl">
-          <h2 className="text-xl font-bold mb-4">Unisciti a una Lega</h2>
-          <input 
-            type="text" placeholder="Inserisci Codice Invito" 
-            className="w-full p-4 bg-slate-900 border border-slate-700 rounded-xl mb-4 text-white"
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value)}
-          />
-          <button onClick={joinLeague} className="w-full py-4 bg-orange-600 hover:bg-orange-500 rounded-xl font-bold text-white uppercase transition-all">
-            Unisciti alla Sfida
-          </button>
+      ) : (
+        <div className="mb-12">
+          <p className="text-slate-500 uppercase font-black text-[10px] tracking-widest mb-1">Il tuo profilo</p>
+          <h1 className="text-4xl font-black text-white italic">Ciao, <span className="text-blue-500">{nickname}</span>! ⚽</h1>
         </div>
-      </div>
+      )}
 
-      {/* LISTA DELLE TUE LEGHE */}
-      <div className="mt-12">
-        <h2 className="text-2xl font-black mb-6 uppercase tracking-tighter">Le tue competizioni attive</h2>
-        <div className="grid grid-cols-1 gap-4">
-          {userLeagues.map(l => (
-            <div key={l.id} className="bg-slate-900 p-6 rounded-2xl border border-slate-700 flex justify-between items-center">
-              <div>
-                <p className="text-lg font-bold text-white">{l.name}</p>
-                <p className="text-xs text-slate-500 font-mono uppercase">Codice: {l.invite_code}</p>
-              </div>
-              <button onClick={() => router.push(`/classifica?id=${l.id}`)} className="px-6 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold uppercase border border-slate-600">
-                Guarda Classifica
-              </button>
+      {/* SEZIONE LEGHE */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        {/* LE MIE LEGHE */}
+        <div>
+          <h2 className="text-xl font-black uppercase text-white mb-6">Le tue Leghe</h2>
+          {leagues.length === 0 ? (
+            <p className="text-slate-500 text-sm italic">Non sei ancora in nessuna lega.</p>
+          ) : (
+            <div className="space-y-4">
+              {leagues.map(l => (
+                <div key={l.id} className="p-6 bg-slate-800 border border-slate-700 rounded-3xl flex justify-between items-center group hover:border-blue-500 transition-all shadow-xl">
+                  <span className="font-bold text-white uppercase">{l.name}</span>
+                  <button 
+                    onClick={() => router.push(`/classifica?id=${l.id}`)}
+                    className="p-3 bg-slate-900 text-blue-400 rounded-xl text-[10px] font-black uppercase hover:bg-blue-600 hover:text-white transition-all"
+                  >
+                    Classifica
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+        </div>
+
+        {/* CREA LEGA */}
+        <div className="p-8 bg-slate-900 border border-slate-800 rounded-[2.5rem]">
+          <h2 className="text-xl font-black uppercase text-white mb-2">Crea Lega</h2>
+          <p className="text-slate-500 text-xs mb-6 font-bold uppercase">Sfida i tuoi amici</p>
+          <input 
+            type="text" 
+            placeholder="Nome della Lega"
+            className="w-full p-4 bg-slate-800 border border-slate-700 rounded-2xl text-white mb-4 outline-none focus:border-blue-500 transition-all"
+            value={newLeagueName}
+            onChange={(e) => setNewLeagueName(e.target.value)}
+          />
+          <button 
+            onClick={createLeague}
+            className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg shadow-blue-900/40"
+          >
+            Crea ora
+          </button>
         </div>
       </div>
     </div>
