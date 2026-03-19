@@ -21,58 +21,65 @@ export default function LegaPage() {
 
   const fetchData = async () => {
     setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      router.push('/login');
-      return;
-    }
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
 
-    // 1. Controllo Nickname
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', user.id)
-      .maybeSingle();
+      // 1. Controllo Profilo
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('id', user.id)
+        .maybeSingle();
 
-    if (profile?.username) {
-      setNickname(profile.username);
-      setHasProfile(true);
-    }
+      if (profile?.username) {
+        setNickname(profile.username);
+        setHasProfile(true);
+      }
 
-    // 2. Recupero Leghe (Query Semplificata e Diretta)
-    // Chiediamo: "Dammi tutte le iscrizioni di questo utente, incluse le info sulla lega e i suoi membri"
-    const { data: membershipData, error: fetchError } = await supabase
-      .from('league_members')
-      .select(`
-        leagues (
-          id,
-          name,
-          league_members (
-            profiles (
-              username
+      // 2. Recupero Iscrizioni
+      const { data: memberships } = await supabase
+        .from('league_members')
+        .select('league_id')
+        .eq('user_id', user.id);
+
+      if (memberships && memberships.length > 0) {
+        const leagueIds = memberships.map(m => m.league_id);
+
+        const { data: leaguesData } = await supabase
+          .from('leagues')
+          .select(`
+            id, 
+            name,
+            league_members (
+              profiles (username)
             )
-          )
-        )
-      `)
-      .eq('user_id', user.id);
+          `)
+          .in('id', leagueIds);
 
-    if (fetchError) {
-      console.error("Errore recupero leghe:", fetchError);
-    } else if (membershipData) {
-      // Trasformiamo i dati grezzi in una lista pulita per la UI
-      const formatted = membershipData
-        .map((m: any) => m.leagues)
-        .filter(l => l !== null)
-        .map(l => ({
-          id: l.id,
-          name: l.name,
-          members: l.league_members
-            .map((member: any) => member.profiles?.username || 'Nuovo Utente')
-            .join(', ')
-        }));
-      setLeagues(formatted);
+        if (leaguesData) {
+          const formatted = leaguesData.map(l => ({
+            id: l.id,
+            name: l.name,
+            members: l.league_members
+              ? (l.league_members as any[])
+                  .map(m => m.profiles?.username || 'Nuovo Utente')
+                  .join(', ')
+              : 'Solo tu'
+          }));
+          setLeagues(formatted);
+        }
+      } else {
+        setLeagues([]);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -105,11 +112,11 @@ export default function LegaPage() {
       })
       .select().single();
 
-    if (lErr) return alert("Errore creazione: " + lErr.message);
+    if (lErr) return alert("Errore: " + lErr.message);
 
     if (league) {
       await supabase.from('league_members').insert({ league_id: league.id, user_id: user.id });
-      alert(`Lega creata! Mandalo a Emma: ${randomInviteCode}`);
+      alert("Lega creata!");
       setNewLeagueName('');
       fetchData();
     }
@@ -120,70 +127,63 @@ export default function LegaPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: league, error: searchError } = await supabase
+    const { data: league } = await supabase
       .from('leagues')
       .select('id, name')
       .eq('invite_code', inviteCodeInput.toUpperCase())
       .maybeSingle();
 
-    if (searchError || !league) return alert("Codice errato!");
+    if (!league) return alert("Codice errato!");
 
     const { error: joinError } = await supabase
       .from('league_members')
       .insert({ league_id: league.id, user_id: user.id });
 
-    if (joinError) {
-      if (joinError.code === '23505') alert("Sei già dentro!");
-      else alert("Errore: " + joinError.message);
-    } else {
-      alert(`Benvenuto nella lega ${league.name}!`);
-      setInviteCodeInput('');
-      fetchData();
-    }
+    if (joinError) alert("Sei già membro o errore DB.");
+    else { alert("Benvenuto!"); setInviteCodeInput(''); fetchData(); }
   };
 
-  if (loading) return <div className="p-20 text-center text-white italic">Aggiornamento tabellone... ⚽</div>;
+  if (loading) return <div className="p-20 text-center text-white italic">Caricamento...</div>;
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto">
       {!hasProfile ? (
-        <div className="mb-12 p-8 bg-blue-600 rounded-[2.5rem] shadow-2xl text-white text-center">
-          <h2 className="text-2xl font-black uppercase italic mb-4">Chi sei in campo?</h2>
+        <div className="mb-12 p-8 bg-blue-600 rounded-[2rem] shadow-2xl text-white text-center">
+          <h2 className="text-2xl font-black uppercase italic mb-4">Scegli il tuo Nickname</h2>
           <div className="flex flex-col md:flex-row gap-4 justify-center">
             <input 
               type="text" value={nickname} onChange={(e)=>setNickname(e.target.value)}
               className="p-4 bg-white/10 border border-white/20 rounded-xl outline-none text-white font-bold"
               placeholder="Nickname"
             />
-            <button onClick={saveNickname} className="px-8 py-4 bg-white text-blue-700 rounded-xl font-black uppercase text-xs">Entra</button>
+            <button onClick={saveNickname} className="px-8 py-4 bg-white text-blue-700 rounded-xl font-black uppercase text-xs">Salva</button>
           </div>
         </div>
       ) : (
-        <h1 className="text-4xl md:text-5xl font-black text-white italic uppercase mb-12 text-center md:text-left tracking-tighter">
+        <h1 className="text-4xl font-black text-white italic uppercase mb-12 text-center md:text-left tracking-tighter">
           Area <span className="text-blue-500">Leghe</span>
         </h1>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* COLONNA SINISTRA: LE MIE LEGHE */}
         <div className="lg:col-span-2">
           <h2 className="text-sm font-black uppercase text-slate-500 mb-6 tracking-widest">Le tue Sfide</h2>
           <div className="space-y-4">
             {leagues.length === 0 ? (
               <div className="p-10 border-2 border-dashed border-slate-800 rounded-[2rem] text-center">
-                <p className="text-slate-500 text-xs font-bold uppercase">Ancora nessuna lega. Crea o unisciti!</p>
+                <p className="text-slate-500 text-xs font-bold uppercase">Nessuna lega trovata.</p>
               </div>
             ) : (
               leagues.map(l => (
                 <div 
                   key={l.id} 
                   onClick={() => router.push(`/classifica?id=${l.id}`)}
-                  className="p-6 bg-slate-800/40 border border-slate-700 rounded-[2rem] cursor-pointer hover:border-blue-500 hover:bg-slate-800 transition-all group"
+                  className="p-6 bg-slate-800/40 border border-slate-700 rounded-[2rem] cursor-pointer hover:border-blue-500 transition-all group"
                 >
                   <div className="flex justify-between items-center">
                     <div>
                       <h3 className="text-xl font-black text-white uppercase group-hover:text-blue-400">{l.name}</h3>
-                      <p className="text-[10px] text-slate-500 mt-2 font-bold uppercase tracking-tight">
+                      <p className="text-[10px] text-slate-500 mt-2 font-bold uppercase">
                         <span className="text-blue-500">Membri:</span> {l.members}
                       </p>
                     </div>
@@ -197,11 +197,9 @@ export default function LegaPage() {
           </div>
         </div>
 
-        {/* COLONNA DESTRA: AZIONI */}
         <div className="lg:col-span-2 space-y-6">
-          {/* UNISCITI */}
           <div className="p-8 bg-slate-900 border border-slate-800 rounded-[2.5rem]">
-            <h2 className="text-lg font-black uppercase text-white mb-4 italic">Hai un codice?</h2>
+            <h2 className="text-lg font-black uppercase text-white mb-4 italic">Unisciti</h2>
             <div className="flex gap-3">
               <input 
                 type="text" value={inviteCodeInput} onChange={(e)=>setInviteCodeInput(e.target.value)}
@@ -212,13 +210,12 @@ export default function LegaPage() {
             </div>
           </div>
 
-          {/* CREA */}
           <div className="p-8 bg-slate-900 border border-slate-800 rounded-[2.5rem]">
-            <h2 className="text-lg font-black uppercase text-white mb-4 italic">Crea nuova sfida</h2>
+            <h2 className="text-lg font-black uppercase text-white mb-4 italic">Crea Nuova</h2>
             <div className="flex gap-3">
               <input 
                 type="text" value={newLeagueName} onChange={(e)=>setNewLeagueName(e.target.value)}
-                placeholder="NOME LEGA"
+                placeholder="NOME"
                 className="flex-1 p-4 bg-slate-800 border border-slate-700 rounded-xl text-white font-bold outline-none"
               />
               <button onClick={createLeague} className="px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase text-[10px]">Crea</button>
