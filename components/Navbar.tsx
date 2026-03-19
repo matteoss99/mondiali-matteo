@@ -47,14 +47,19 @@ export default function Navbar() {
           Partite
         </Link>
         
-        {/* NUOVO TASTO PRONOSTICI */}
         <Link href="/pronostici" className="text-sm font-medium text-slate-400 hover:text-blue-400 transition flex items-center gap-1">
           🎯 Pronostici
         </Link>
+
+        {/* LINK RINOMINATO */}
+        <Link href="/previsioni" className="text-sm font-medium text-slate-400 hover:text-yellow-400 transition flex items-center gap-1">
+          📝 Le mie previsioni
+        </Link>
+        
         <Link href="/lega" className="text-sm font-medium text-slate-400 hover:text-green-400 transition flex items-center gap-1">
-  🤝 Lega
-</Link>
-        {/* TASTO LIVE */}
+          🤝 Lega
+        </Link>
+
         <Link href="/live" className="text-sm font-medium text-red-500 hover:text-red-400 flex items-center gap-1 transition">
           <span className="h-2 w-2 bg-red-500 rounded-full animate-pulse"></span>
           LIVE

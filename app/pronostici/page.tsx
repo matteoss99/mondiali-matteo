@@ -39,9 +39,9 @@ export default function PronosticiPage() {
       data.Stages?.forEach((stage: any) => {
         let displayLeague = stage.Snm;
         if (displayLeague.toLowerCase().includes('europa league')) {
-          displayLeague = 'Europa League';
+            displayLeague = 'Europa League';
         } else if (displayLeague.toLowerCase().includes('conference league')) {
-          displayLeague = 'Conference League';
+            displayLeague = 'Conference League';
         }
         
         leagueSet.add(displayLeague);
@@ -187,12 +187,12 @@ export default function PronosticiPage() {
                 </div>
               </div>
 
-              {/* LOGICA BOTTONE VS MESSAGGIO */}
+              {/* LOGICA BOTTONE VS MESSAGGIO GIALLO */}
               {isAlreadyDone ? (
                 <div className="text-center p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
                   <p className="text-[10px] text-yellow-500 font-bold uppercase leading-tight">
                     Hai già giocato questa partita.<br/>
-                    <Link href="/previsioni" className="underline hover:text-yellow-400">Modificala in "Previsioni"</Link>
+                    <Link href="/previsioni" className="underline hover:text-yellow-400">Modificala in "Le mie previsioni"</Link>
                   </p>
                 </div>
               ) : (
